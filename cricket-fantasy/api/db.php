@@ -2,7 +2,7 @@
 header('Content-Type: application/json');
 
 $DB_HOST = '127.0.0.1';
-$DB_NAME = 'cricket_fantasy';
+$DB_NAME = 'league';
 $DB_USER = 'root';
 $DB_PASS = ''; // adjust if you have a password
 

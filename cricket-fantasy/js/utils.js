@@ -46,12 +46,29 @@ export function toast(msg, bg = '#10b981', color = '#fff', duration = 3200) {
 /** Match two player name strings using last-name heuristics. */
 export function isSamePlayer(a, b) {
   if (!a || !b) return false;
-  const na = norm(a), nb = norm(b);
+
+  const na = norm(a);
+  const nb = norm(b);
+
+  // exact match
   if (na === nb) return true;
-  const pa = na.split(' '), pb = nb.split(' ');
-  const la = pa[pa.length - 1], lb = pb[pb.length - 1];
-  if (la === lb && na[0] === nb[0]) return true;
-  if (la === lb && la.length > 3)   return true;
+
+  // contains match (VERY IMPORTANT)
+  if (na.includes(nb) || nb.includes(na)) return true;
+
+  // split ORIGINAL names (NOT norm)
+  const pa = a.toLowerCase().split(' ');
+  const pb = b.toLowerCase().split(' ');
+
+  const la = pa[pa.length - 1]; // last name
+  const lb = pb[pb.length - 1];
+
+  // last name match + first initial match
+  if (la === lb && pa[0][0] === pb[0][0]) return true;
+
+  // last name strong match
+  if (la === lb && la.length > 3) return true;
+
   return false;
 }
 

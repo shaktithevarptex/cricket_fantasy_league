@@ -138,21 +138,21 @@ export function applyMatch(tournament, matchInfo, rawScorecard) {
       const total = bat + bowl + field;
       if (total === 0) return player;
 
-      const mp = {
-        batting:  { runs, balls, strikeRate: sr, fours, sixes, points: bat },
-        bowling:  { wickets: wkts, overs, runs: runsConceded, economy: eco, points: bowl },
-        fielding: { catches, runouts, stumpings, points: field },
-        bonus:    { milestone: 0, mom: 0 }
-      };
+        const mp = {
+          batting:  { runs, balls, strikeRate: sr, fours, sixes, points: bat },
+          bowling:  { wickets: wkts, overs, runs: runsConceded, economy: eco, points: bowl },
+          fielding: { catches, runouts, stumpings, points: field },
+          bonus:    { milestone: 0, mom: 0 }
+        };
 
-      return {
-        ...player,
-        matchPoints:    { ...(player.matchPoints || {}), [mid]: mp },
-        totalPoints:    (player.totalPoints    || 0) + total,
-        battingPoints:  (player.battingPoints  || 0) + bat,
-        bowlingPoints:  (player.bowlingPoints  || 0) + bowl,
-        fieldingPoints: (player.fieldingPoints || 0) + field
-      };
+        return {
+          ...player,
+          matchPoints:    { ...(player.matchPoints || {}), [mid]: mp },
+          totalPoints:    (player.totalPoints    || 0) + total,
+          battingPoints:  (player.battingPoints  || 0) + bat,
+          bowlingPoints:  (player.bowlingPoints  || 0) + bowl,
+          fieldingPoints: (player.fieldingPoints || 0) + field
+        };
     })
   }));
 

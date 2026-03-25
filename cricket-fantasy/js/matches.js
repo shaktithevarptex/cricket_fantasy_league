@@ -4,6 +4,7 @@
 import { state, getTournament } from './state.js';
 import { escHtml }              from './utils.js';
 import { getWeekKeyFromMatch, weekKey } from './week.js';
+import { loadTournamentsFromServer } from './api.js';
 
 // ── Match list ────────────────────────────────────
 export function renderMatchesList(t) {
@@ -87,7 +88,11 @@ const sorted = [...matches].sort((a, b) => {
 // ── Match detail view ─────────────────────────────
 export async function showMatchDetail(matchId) {
   state.matchDetailOpen = true;
-  const t     = getTournament();
+  
+  // 🔥 ALWAYS LOAD FRESH DATA
+  await loadTournamentsFromServer();
+
+  const t = getTournament();
   const match = (t.matches || []).find(m => m.id === matchId);
   if (!match) return;
 
@@ -158,10 +163,13 @@ export function renderFantasyPoints(matchId) {
 
   const teamsSorted = (t.teams || [])
     .map(team => {
-      const active = (team.players || []).filter(p => p.matchPoints?.[matchId]);
+      const active = (team.players || []).filter(p => p.matchPoints && p.matchPoints[String(matchId)] !== undefined);
       const total  = active.reduce((s, p) => {
-        const mp         = p.matchPoints[matchId] || {};
-        const base       = (mp.batting?.points || 0) + (mp.bowling?.points || 0) + (mp.fielding?.points || 0) + (mp.bonus?.milestone || 0) + (mp.bonus?.mom || 0);
+        const mp = p.matchPoints[String(matchId)] || {};
+        const base       = (mp.batting?.points  || 0) + (mp.bowling?.points  || 0) + (mp.fielding?.points || 0)
+                         + (mp.bonus?.milestone || 0) + (mp.bonus?.mom || 0)
+                         + (mp.bonus?.manual    || 0) + (mp.bonus?.hatrick  || 0)
+                         + (mp.bonus?.sixSixes  || 0) + (mp.bonus?.sixFours || 0);
         const teamCap    = wc[team.id] || {};
         const isCaptain  = String(teamCap.captain) === String(p.id);
         const isVC       = String(teamCap.vc) === String(p.id);
@@ -175,9 +183,11 @@ export function renderFantasyPoints(matchId) {
 
   ptsEl.innerHTML = teamsSorted.map(obj => {
     const sorted = [...obj.active].sort((a, b) => {
-      const ma   = a.matchPoints[matchId] || {};
-      const mb   = b.matchPoints[matchId] || {};
-      const base = x => (x.batting?.points || 0) + (x.bowling?.points || 0) + (x.fielding?.points || 0) + (x.bonus?.mom || 0);
+      const ma = a.matchPoints[String(matchId)] || {};
+const mb = b.matchPoints[String(matchId)] || {};
+      const base = x => (x.batting?.points  || 0) + (x.bowling?.points  || 0) + (x.fielding?.points || 0)
+                      + (x.bonus?.mom || 0) + (x.bonus?.manual || 0)
+                      + (x.bonus?.hatrick || 0) + (x.bonus?.sixSixes || 0) + (x.bonus?.sixFours || 0);
       return base(mb) - base(ma);
     });
 
@@ -185,25 +195,34 @@ export function renderFantasyPoints(matchId) {
     <div class="card mb-14">
       <div class="lbl txt-acc">${escHtml(obj.team.name)} — ${obj.total} pts</div>
       ${sorted.map(p => {
-        const mp        = p.matchPoints[matchId] || {};
+        const mp = p.matchPoints[String(matchId)] || {};
         const teamCap   = wc[obj.team.id] || {};
         const isCaptain = String(teamCap.captain) === String(p.id);
         const isVC      = String(teamCap.vc) === String(p.id);
-        const base      = (mp.batting?.points || 0) + (mp.bowling?.points || 0) + (mp.fielding?.points || 0) + (mp.bonus?.milestone || 0) + (mp.bonus?.mom || 0);
+        const base      = (mp.batting?.points  || 0) + (mp.bowling?.points  || 0) + (mp.fielding?.points || 0)
+                        + (mp.bonus?.milestone || 0) + (mp.bonus?.mom || 0)
+                        + (mp.bonus?.manual    || 0) + (mp.bonus?.hatrick  || 0)
+                        + (mp.bonus?.sixSixes  || 0) + (mp.bonus?.sixFours || 0);
         const multiplier = isCaptain ? 2 : isVC ? 1.5 : 1;
         const tot       = Math.round(base * multiplier);
 
         return `
           <div class="flex gap-10 player-row"
                onclick="toggleStats(this)"
-               style="padding:8px 0;border-bottom:1px solid var(--bdr);cursor:pointer">
+               style="padding:8px 0;border-bottom:1px solid var(--bdr);cursor:pointer;align-items:center">
             <div class="flex-1">
-              <div class="fw-600 txt-main">
-                ${escHtml(p.name)} ${isCaptain ? '👑' : isVC ? '⭐' : ''}
+              <div class="fw-600 txt-main" style="display:flex;align-items:center;flex-wrap:wrap">
+                ${escHtml(p.name)}
+                ${isCaptain ? `<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;margin-left:6px;background:rgba(251,191,36,.2);color:#fbbf24;border:1px solid rgba(251,191,36,.4)">C</span><span style="font-size:11px;color:#fbbf24;font-weight:700;margin-left:3px">×2</span>` : isVC ? `<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;margin-left:6px;background:rgba(139,92,246,.2);color:#a78bfa;border:1px solid rgba(139,92,246,.35)">VC</span><span style="font-size:11px;color:#a78bfa;font-weight:700;margin-left:3px">×1.5</span>` : ''}
                 <span style="margin-left:6px;font-size:10px;color:#9ca3af">▼</span>
               </div>
+              <div class="fs-11 txt-dim">🏏 ${mp.batting?.points||0} · 🎳 ${mp.bowling?.points||0} · 🧤 ${mp.fielding?.points||0}</div>
             </div>
-            <span class="txt-acc fw-700" style="font-size:15px">${tot}</span>
+            <div style="text-align:right;flex-shrink:0">
+              ${multiplier > 1
+                ? `<span style="font-size:12px;color:var(--dim);text-decoration:line-through;margin-right:4px">${base}</span><span class="fw-800" style="font-size:16px;color:${isCaptain?'#fbbf24':'#a78bfa'}">${tot}</span>`
+                : `<span class="txt-acc fw-700" style="font-size:15px">${tot}</span>`}
+            </div>
           </div>
           <div class="player-stats" style="display:none;padding:10px 12px;border-bottom:1px solid var(--bdr)">
 
@@ -237,14 +256,18 @@ export function renderFantasyPoints(matchId) {
               </table>
             </div>
 
+            ${((mp.bonus?.mom||0)+(mp.bonus?.manual||0)+(mp.bonus?.milestone||0)+(mp.bonus?.hatrick||0)+(mp.bonus?.sixSixes||0)+(mp.bonus?.sixFours||0)) > 0 ? `
             <div class="stat-block">
               <div class="fw-700 txt-main mb-6">⭐ Bonus</div>
               <table class="stat-table">
-                <tr><td>Man of Match</td><td class="txt-acc fw-700">${mp.bonus?.mom || 0}</td></tr>
-                ${(mp.bonus?.manual || 0) > 0 ? `<tr><td>Manual Bonus</td><td class="txt-acc fw-700">${mp.bonus.manual}</td></tr>` : ''}
-                ${(mp.bonus?.milestone || 0) > 0 ? `<tr><td>Milestone</td><td class="txt-acc fw-700">${mp.bonus.milestone}</td></tr>` : ''}
+                ${(mp.bonus?.mom      ||0) ? `<tr><td>Man of the Match</td><td class="txt-acc fw-700">+${mp.bonus.mom}</td></tr>`      : ''}
+                ${(mp.bonus?.hatrick  ||0) ? `<tr><td>Hat-trick</td>       <td class="txt-acc fw-700">+${mp.bonus.hatrick}</td></tr>`  : ''}
+                ${(mp.bonus?.sixSixes ||0) ? `<tr><td>6 Sixes in Over</td> <td class="txt-acc fw-700">+${mp.bonus.sixSixes}</td></tr>` : ''}
+                ${(mp.bonus?.sixFours ||0) ? `<tr><td>6 Fours in Over</td> <td class="txt-acc fw-700">+${mp.bonus.sixFours}</td></tr>` : ''}
+                ${(mp.bonus?.milestone||0) ? `<tr><td>Milestone</td>        <td class="txt-acc fw-700">+${mp.bonus.milestone}</td></tr>`: ''}
+                ${(mp.bonus?.manual   ||0) ? `<tr><td>Other Bonus</td>      <td class="txt-acc fw-700">${mp.bonus.manual>0?'+':''}${mp.bonus.manual}</td></tr>` : ''}
               </table>
-            </div>
+            </div>` : ''}
 
             <div class="stat-block" style="background:${isCaptain ? 'rgba(251,191,36,.08)' : isVC ? 'rgba(139,92,246,.08)' : 'transparent'};border:1px solid ${isCaptain ? 'rgba(251,191,36,.3)' : isVC ? 'rgba(139,92,246,.3)' : 'var(--bdr)'}">
               <div class="fw-700 txt-main mb-6">👑 Role</div>

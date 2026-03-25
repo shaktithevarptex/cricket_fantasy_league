@@ -4,9 +4,9 @@
 -- ║   ALTER TABLE blocks at the bottom only.                     ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-CREATE DATABASE IF NOT EXISTS cricket_fantasy
+CREATE DATABASE IF NOT EXISTS league
   DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
-USE cricket_fantasy;
+USE league;
 
 -- ── tournaments ──────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tournaments (

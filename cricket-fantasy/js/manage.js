@@ -2,11 +2,11 @@
 // MANAGE — admin tab: scores, manual, injury, captain
 // ═══════════════════════════════════════════════════
 import { state, getTournament }          from './state.js';
-import { API_KEYS, getHits, bumpHits }   from './config.js';
+import { getApiKey, setApiKey, getHits, bumpHits }   from './config.js';
 import { apiManualPoints,
          apiFetchSeriesMatches,
          apiNightlySync,
-         loadTournamentsFromServer }     from './api.js';
+         loadTournamentsFromServer,apiUpdateTournament }     from './api.js';
 import { escHtml, escAttr, norm, toast, makeId } from './utils.js';
 import { normalizeScorecard }            from './utils.js';
 import { applyMatch }                    from './scoring.js';
@@ -52,11 +52,11 @@ export function renderSubScores(t) {
       <div class="lbl" style="margin-bottom:10px">🔑 API Keys <span class="txt-dim fs-11">(stored locally)</span></div>
       <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center">
         <span class="fs-12 txt-dim">Series fetch</span>
-        <input id="ak-series"    class="inp" style="font-family:monospace;font-size:12px" value="${escHtml(API_KEYS.series)}"    placeholder="Key for series_info"/>
+        <input id="ak-series"    class="inp" style="font-family:monospace;font-size:12px" value="${escHtml(getApiKey('series'))}"    placeholder="Key for series_info"/>
         <span class="fs-12 txt-dim">Scorecards</span>
-        <input id="ak-scorecard" class="inp" style="font-family:monospace;font-size:12px" value="${escHtml(API_KEYS.scorecard)}" placeholder="Key for match_scorecard"/>
+        <input id="ak-scorecard" class="inp" style="font-family:monospace;font-size:12px" value="${escHtml(getApiKey('scorecard'))}" placeholder="Key for match_scorecard"/>
         <span class="fs-12 txt-dim">Players</span>
-        <input id="ak-players"   class="inp" style="font-family:monospace;font-size:12px" value="${escHtml(API_KEYS.players)}"   placeholder="Key for player search"/>
+        <input id="ak-players"   class="inp" style="font-family:monospace;font-size:12px" value="${escHtml(getApiKey('players'))}"   placeholder="Key for player search"/>
       </div>
       <button class="btn btn-ghost" style="margin-top:10px;font-size:12px" onclick="saveApiKeysFromUI()">💾 Save Keys</button>
       <div class="fs-11 txt-dim" style="margin-top:6px">Each key has 100 hits/day. Use separate keys to get 300 total hits.</div>
@@ -76,9 +76,7 @@ export function renderSubScores(t) {
       </div>
       <div class="txt-dim fs-12 mb-8">Quick pick:</div>
       ${[
-        ['5978f057-af70-4dcf-b9ee-04831b8df947', 'ICC T20 WC 2026'],
-        ['d5a498c8-7596-4b93-8ab0-e0efc3345312', 'IPL 2025'],
-        ['b31173af-1e08-4359-8a7e-1521b9847e54', 'NZ Tour India 2026']
+        ['87c62aac-bc3c-4738-ab93-19da0690488f', 'IPL 2026'],
       ].map(([id, nm]) => `
         <button class="w100 ta-left" style="background:none;border:1px solid var(--bdr);border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px;margin-bottom:6px;color:var(--txt)"
           onmouseover="this.style.borderColor='var(--bdra)'" onmouseout="this.style.borderColor='var(--bdr)'"
@@ -125,12 +123,13 @@ export function saveApiKeysFromUI() {
   const s  = document.getElementById('ak-series')?.value.trim();
   const sc = document.getElementById('ak-scorecard')?.value.trim();
   const pl = document.getElementById('ak-players')?.value.trim();
-  if (s)  { API_KEYS.series    = s;  localStorage.setItem('cric_key_series',    s);  }
-  if (sc) { API_KEYS.scorecard = sc; localStorage.setItem('cric_key_scorecard', sc); }
-  if (pl) { API_KEYS.players   = pl; localStorage.setItem('cric_key_players',   pl); }
+
+  if (s)  setApiKey('series', s);
+  if (sc) setApiKey('scorecard', sc);
+  if (pl) setApiKey('players', pl);
+
   toast('✅ API keys saved');
 }
-
 export async function fetchSeriesMatches() {
   const sid = (document.getElementById('scores-sid')?.value || '').trim();
   const log = document.getElementById('scores-log');
@@ -142,7 +141,7 @@ export async function fetchSeriesMatches() {
   addScoreLog('📡 Fetching match schedule from series_info… (1 API hit)');
 
   try {
-    const j = await apiFetchSeriesMatches(t.id, sid, API_KEYS.series);
+    const j = await apiFetchSeriesMatches(t.id, sid, getApiKey('series'));
     if (j.status === 'success') {
       addScoreLog(`✅ "${j.series_name}" — ${j.total} matches in series`, 'var(--ok)');
       addScoreLog(`📥 New: ${j.new} added · Already in DB: ${j.existing}`, 'var(--acc)');
@@ -163,7 +162,7 @@ export async function fetchSeriesMatches() {
 async function fetchSeriesMatchesDirect(sid, t) {
   let seriesData;
   try {
-    const res = await fetch(`api/cric_proxy.php?type=series&id=${sid}`);
+    const res = await fetch(`api/cric_proxy.php?type=series&id=${sid}&apikey=${getApiKey('series')}`);
     seriesData = await res.json();
     bumpHits(1);
   } catch (e) { addScoreLog('❌ ' + e.message, 'var(--err)'); return; }
@@ -185,18 +184,44 @@ async function fetchSeriesMatchesDirect(sid, t) {
   });
 
   let added = 0, skipped = 0;
-  let updated = { ...t, matches: [...(t.matches || [])] };
-  sorted.forEach(m => {
-    if (!m.id || existingIds.has(m.id)) { skipped++; return; }
-    let status = 'upcoming';
-    if (m.matchEnded)   status = 'completed';
-    else if (m.matchStarted) status = 'live';
-    updated.matches.push({ id: m.id, name: m.name, date: m.date, venue: m.venue || '',
-      status, result: m.status || '', teamInfo: m.teamInfo || [],
-      matchNumber: parseMatchNum(m.name || ''), isScored: false });
-    added++;
-  });
-  updateTournament(updated);
+  const existingMap = new Map((t.matches || []).map(m => [m.id, m]));
+  let updated = {
+    ...t,
+    matches: sorted.map(m => {
+      if (!m.id) return null;
+  
+      let status = 'upcoming';
+      if (m.matchEnded)        status = 'completed';
+      else if (m.matchStarted) status = 'live';
+  
+      const old = existingMap.get(m.id);
+  
+      if (old) {
+        skipped++;
+        return {
+          ...old,   // 🔥 KEEP scorecard_raw + isScored
+          ...m,
+          status
+        };
+      }
+  
+      added++;
+      return {
+        id: m.id,
+        name: m.name,
+        date: m.date,
+        venue: m.venue || '',
+        status,
+        result: m.status || '',
+        teamInfo: m.teamInfo || [],
+        matchNumber: parseMatchNum(m.name || ''),
+        isScored: false,
+        scorecard_raw: null
+      };
+    }).filter(Boolean)
+  };
+  addScoreLog(`📥 Added ${added} new · Skipped ${skipped} (already in DB)`, 'var(--acc)');
+  await apiUpdateTournament(updated);
   renderMatchesList(getTournament());
   renderSubScores(getTournament());
   addScoreLog(`📥 Added ${added} new · Skipped ${skipped} (already in DB)`, 'var(--acc)');
@@ -214,8 +239,12 @@ export async function triggerNightlySync() {
       addScoreLog(`✅ Scored ${j.matches_scored}/${j.matches_found} matches · Hits: ${j.api_hits_used}`, 'var(--ok)');
       (j.log || []).forEach(l => addScoreLog(l, 'var(--dim)'));
       await loadTournamentsFromServer();
-      renderLeaderboard(getTournament());
-      renderMatchesList(getTournament());
+
+      const t = getTournament();
+
+      renderLeaderboard(t);
+      renderMatchesList(t);
+      renderFantasyPoints(t); // 🔥 ADD THIS
     } else {
       addScoreLog('❌ ' + (j.reason || 'Failed'), 'var(--err)');
     }
@@ -237,7 +266,7 @@ export async function fetchScores() {
   addScoreLog('📡 Fetching series info… (1 API hit)');
   let seriesData;
   try {
-    const res  = await fetch(`api/cric_proxy.php?type=series&id=${sid}`);
+    const res  = await fetch(`api/cric_proxy.php?type=series&id=${sid}&apikey=${getApiKey('series')}`);
     seriesData = await res.json();
     bumpHits(1);
   } catch (err) { addScoreLog('❌ ' + err.message, 'var(--err)'); return; }
@@ -248,19 +277,41 @@ export async function fetchScores() {
   const seriesName = seriesData.data?.info?.name || sid;
   addScoreLog(`✅ "${seriesName}" — ${allMatches.length} matches found`, 'var(--ok)');
 
-  let updated      = { ...t, teams: (t.teams || []).map(x => ({ ...x, players: [...(x.players || [])] })) };
+  let updated = { ...t, teams: (t.teams || []).map(x => ({ ...x, players: [...(x.players || [])] })) };
+ 
   let upcoming = 0, live = 0, completed = 0;
   allMatches.forEach(m => { if (m.matchEnded) completed++; else if (m.matchStarted) live++; else upcoming++; });
   addScoreLog(`📅 Upcoming: ${upcoming} · 🔴 Live: ${live} · ✅ Finished: ${completed}`, 'var(--dim)');
 
-  const alreadyDone = new Set((t.matches || []).map(m => m.id));
-  allMatches.forEach(m => {
-    if (alreadyDone.has(m.id)) return;
+  const existingMap = new Map((t.matches || []).map(m => [m.id, m]));
+
+  updated.matches = allMatches.map(m => {
+    // 🔥 IMPORTANT: backup matches before scoring
+    const old = existingMap.get(m.id);
+  
     let status = 'upcoming';
     if (m.matchEnded)        status = 'completed';
     else if (m.matchStarted) status = 'live';
-    updated.matches.push({ id: m.id, name: m.name, date: m.date, venue: m.venue || '',
-      status, result: m.status || '', teamInfo: m.teamInfo || [], teams: m.teams || [] });
+  
+    if (old) {
+      return {
+        ...old, // 🔥 KEEP OLD DATA (IMPORTANT)
+        ...m,
+        status
+      };
+    }
+  
+    return {
+      id: m.id,
+      name: m.name,
+      date: m.date,
+      venue: m.venue || '',
+      status,
+      result: m.status || '',
+      teamInfo: m.teamInfo || [],
+      isScored: false,
+      scorecard_raw: null
+    };
   });
 
   const scoredMatchIds = new Set(
@@ -272,10 +323,13 @@ export async function fetchScores() {
 
   if (!needScoring.length) {
     addScoreLog(completed === 0 ? 'ℹ️ No matches finished yet.' : '✅ All completed matches already scored.', 'var(--dim)');
-    updateTournament(updated);
-    renderLeaderboard(getTournament());
-    renderMatchesList(getTournament());
-    return;
+    await loadTournamentsFromServer();
+
+      const tNew = getTournament();
+
+      renderLeaderboard(tNew);
+      renderMatchesList(tNew);
+      renderFantasyPoints(tNew); 
   }
 
   const remaining = Math.min(94 - getHits(), 10);
@@ -288,13 +342,15 @@ export async function fetchScores() {
     if (getHits() >= 94) { addScoreLog('⚠️ Hit limit close — stopping.', 'var(--warn)'); break; }
     addScoreLog(`⬇️ ${match.name.split(',')[0]}…`);
     try {
-      const res = await fetch(`api/cric_proxy.php?type=scorecard&id=${match.id}`);
+      const res = await fetch(`api/cric_proxy.php?type=scorecard&id=${match.id}&apikey=${getApiKey('scorecard')}`);
       const sc  = await res.json();
       scorecardHits++;
       bumpHits(1);
       if (sc?.status === 'success' && sc.data) {
         const normalized = normalizeScorecard(sc.data);
         updated = applyMatch(updated, match, normalized);
+
+        // 🔥 update matches incrementally (NO reset)
         updated.matches = updated.matches.map(m =>
           String(m.id) === String(match.id)
             ? { ...m, scorecard_raw: JSON.stringify(sc.data), isScored: true }
@@ -313,10 +369,19 @@ export async function fetchScores() {
   }
 
   updateTournament(updated);
-  renderLeaderboard(getTournament());
-  renderMatchesList(getTournament());
+
+  // 🔥 IMPORTANT: reload fresh data from DB
+  await loadTournamentsFromServer();
+
+  const tNew = getTournament();
+
+  renderLeaderboard(tNew);
+  renderMatchesList(tNew);
+  renderFantasyPoints(tNew); // 🔥 THIS LINE FIXES YOUR ISSUE
+  
   addScoreLog(`✅ Sync finished · Hits used: ${1 + scorecardHits} · Today: ${getHits()}/100`, 'var(--ok)');
   if (skipped > 0) addScoreLog(`ℹ️ Sync again to score ${skipped} remaining`, 'var(--dim)');
+
 }
 
 export function filterManualPlayers() {
@@ -421,28 +486,7 @@ export function renderSubManual(t) {
     <button class="btn btn-success" style="width:100%" onclick="applyManualPoints()">✅ Apply Points</button>
     <div id="manual-msg" style="margin-top:10px;display:none"></div>
   </div>
-
-  <div class="card mb-14">
-    <div class="lbl">🏅 Team Award / Penalty</div>
-    <div class="txt-dim fs-12" style="margin:8px 0 14px">Apply points to every non-injured player in a team.</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-      <div>
-        <div class="lbl fs-11">Team</div>
-        <select class="inp" id="award-team" style="margin-top:6px">${teams}</select>
-      </div>
-      <div>
-        <div class="lbl fs-11">Points per player</div>
-        <input class="inp" id="award-pts" type="number" value="50" style="margin-top:6px"/>
-      </div>
-    </div>
-    <div style="margin-bottom:14px">
-      <div class="lbl fs-11">Reason</div>
-      <input class="inp" id="award-reason" placeholder="e.g. Win bonus" style="margin-top:6px"/>
-    </div>
-    <button class="btn btn-primary" style="width:100%" onclick="applyTeamAward()">🏆 Apply Team Award</button>
-    <div id="award-msg" style="margin-top:10px;display:none"></div>
-  </div>
-
+  
   <div class="card">
     <div class="lbl">🎖 Tournament Awards</div>
     <div class="txt-dim fs-12" style="margin:8px 0 14px">Seasonal awards (+200 pts each).</div>
@@ -528,13 +572,21 @@ export async function applyManualPoints() {
         const mp = { ...(p.matchPoints || {}) };
         if (matchId) {
           const cur = mp[matchId] || { batting: { points: 0 }, bowling: { points: 0 }, fielding: { points: 0 }, bonus: {} };
-         if (reason.toLowerCase().includes('man of the match') || cat === 'mom') {
-            cur.bonus = cur.bonus || {};
-            cur.bonus.mom = (cur.bonus.mom || 0) + pts;
+          const r = reason.toLowerCase();
+          cur.bonus = cur.bonus || {};
+          if (r.includes('man of the match') || r.includes('mom') || cat === 'mom') {
+            cur.bonus.mom      = (cur.bonus.mom      || 0) + pts;
+          } else if (r.includes('hat-trick') || r.includes('hatrick') || r.includes('hat trick')) {
+            cur.bonus.hatrick  = (cur.bonus.hatrick  || 0) + pts;
+          } else if (r.includes('6 sixes') || r.includes('six sixes')) {
+            cur.bonus.sixSixes = (cur.bonus.sixSixes || 0) + pts;
+          } else if (r.includes('6 fours') || r.includes('six fours')) {
+            cur.bonus.sixFours = (cur.bonus.sixFours || 0) + pts;
           } else if (['batting', 'bowling', 'fielding'].includes(cat)) {
-            cur[cat] = cur[cat] || { points: 0 }; cur[cat].points = (cur[cat].points || 0) + pts;
+            cur[cat] = cur[cat] || { points: 0 };
+            cur[cat].points = (cur[cat].points || 0) + pts;
           } else {
-            cur.bonus = cur.bonus || {}; cur.bonus.manual = (cur.bonus.manual || 0) + pts;
+            cur.bonus.manual   = (cur.bonus.manual   || 0) + pts;
           }
           mp[matchId] = cur;
         }
@@ -578,7 +630,7 @@ export async function applyTeamAward() {
     if (tm.id !== teamId) return tm;
     return { ...tm, players: (tm.players || []).map(p => ({ ...p, totalPoints: (p.totalPoints || 0) + pts })) };
   }) };
-  updateTournament(updated);
+  await apiUpdateTournament(updated);
   renderLeaderboard(getTournament());
   showMsg('<div class="alert alert-ok">✅ Team award applied (offline)</div>');
 }

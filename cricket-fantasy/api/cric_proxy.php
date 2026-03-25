@@ -2,15 +2,21 @@
 
 header('Content-Type: application/json');
 
-// 🔒 YOUR SECRET KEY (only here)
-$API_KEY = "28147e70-c944-44b9-9aa1-b273d0daafd1";
+// 🔥 GET API KEY FROM FRONTEND (fallback to default)
+$API_KEY = $_GET['apikey'] ?? "2bd89ac8-389f-4b4c-8ded-8b50fc6dc179";
 
-// Get params from frontend
-$type = $_GET['type'] ?? '';
-$id   = $_GET['id'] ?? '';
+// Params
+$type   = $_GET['type']   ?? '';
+$id     = $_GET['id']     ?? '';
 $search = $_GET['search'] ?? '';
 
-// Build URL based on request
+// Validate
+if (!$type) {
+    echo json_encode(["status"=>"error","reason"=>"Missing type"]);
+    exit;
+}
+
+// Build URL
 if ($type === 'series') {
     $url = "https://api.cricapi.com/v1/series_info?apikey=$API_KEY&id=$id";
 }
@@ -25,11 +31,23 @@ else {
     exit;
 }
 
-// Fetch from CricAPI
-$response = file_get_contents($url);
+// 🔥 Fetch (better with error handling)
+$opts = [
+    "http" => [
+        "method"  => "GET",
+        "timeout" => 10
+    ]
+];
 
-if(!$response){
-    echo json_encode(["status"=>"error","reason"=>"API failed"]);
+$context = stream_context_create($opts);
+$response = @file_get_contents($url, false, $context);
+
+if (!$response) {
+    echo json_encode([
+        "status"=>"error",
+        "reason"=>"API request failed",
+        "url"=>$url // helpful debug
+    ]);
     exit;
 }
 

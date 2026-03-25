@@ -7,18 +7,35 @@ try{
 
   foreach($tournaments as &$t){
 
-    // ── Decode weekly_captains JSON from DB ──────────────────────────────────
-    // This JSON is always kept in sync with current team/player IDs by
-    // update_tournament.php (remapped on every save). Safe to use directly.
-    if(!empty($t['weekly_captains'])){
-      $wc = json_decode($t['weekly_captains'], true);
-      $t['weeklyCaptains'] = is_array($wc) ? $wc : new stdClass();
-    } else {
-      $t['weeklyCaptains'] = new stdClass();
-    }
-    unset($t['weekly_captains']);
+    // ─────────────────────────────────────────────
+    // 🔥 FIX: LOAD WEEKLY CAPTAINS FROM TABLE
+    // ─────────────────────────────────────────────
+    $wc = [];
 
-    // ── Teams ────────────────────────────────────────────────────────────────
+    $stmtW = $pdo->prepare("
+      SELECT team_id, week_key, captain_id, vc_id
+      FROM weekly_captains
+      WHERE tournament_id = ?
+    ");
+    $stmtW->execute([$t['id']]);
+
+    foreach($stmtW->fetchAll() as $row){
+      $wk  = $row['week_key'];
+      $tid = (string)$row['team_id']; // IMPORTANT: string key
+
+      if(!isset($wc[$wk])) $wc[$wk] = [];
+
+      $wc[$wk][$tid] = [
+        'captain' => (string)$row['captain_id'],
+        'vc'      => (string)$row['vc_id']
+      ];
+    }
+
+    $t['weeklyCaptains'] = $wc;
+
+    // ─────────────────────────────────────────────
+    // Teams
+    // ─────────────────────────────────────────────
     $stmt2 = $pdo->prepare(
       'SELECT * FROM teams WHERE tournament_id=? ORDER BY id ASC'
     );
@@ -33,6 +50,7 @@ try{
       $players = $stmt3->fetchAll();
 
       foreach($players as &$p){
+
         // match_points JSON
         $p['matchPoints'] = !empty($p['match_points'])
           ? json_decode($p['match_points'], true)
@@ -49,13 +67,13 @@ try{
         $p['isInjured']    = (bool)($p['is_injured'] ?? false);
         unset($p['is_injured']);
 
-        $p['cricketTeam']  = $p['cricket_team']  ?? '';
+        $p['cricketTeam']  = $p['cricket_team'] ?? '';
         unset($p['cricket_team']);
 
-        $p['replacedFor']  = $p['replaced_for']  ?? null;
+        $p['replacedFor']  = $p['replaced_for'] ?? null;
         unset($p['replaced_for']);
 
-        $p['country']        = $p['country']        ?? '';
+        $p['country']        = $p['country'] ?? '';
         $p['countryFlagUrl'] = $p['country_flag_url'] ?? '';
         unset($p['country_flag_url']);
 
@@ -65,15 +83,22 @@ try{
         unset($p['player_info']);
 
         $p['price'] = (float)($p['price'] ?? 0);
-        $p['id']    = (string)$p['id'];
+
+        // 🔥 IMPORTANT: IDs as string
+        $p['id'] = (string)$p['id'];
       }
+
       $tm['players'] = $players;
-      $tm['id']      = (string)$tm['id'];
+
+      // 🔥 IMPORTANT: team id as string
+      $tm['id'] = (string)$tm['id'];
     }
+
     $t['teams'] = $teams;
 
-    // ── Matches ──────────────────────────────────────────────────────────────
-    // Order: numbered matches first (1st, 2nd...), then knockouts by date
+    // ─────────────────────────────────────────────
+    // Matches
+    // ─────────────────────────────────────────────
     $stmtM = $pdo->prepare(
       'SELECT * FROM matches WHERE tournament_id=?
        ORDER BY CASE WHEN match_number IS NULL THEN 1 ELSE 0 END ASC,
@@ -83,23 +108,41 @@ try{
     $matches = $stmtM->fetchAll();
 
     foreach($matches as &$m){
-      $m['teamInfo']    = !empty($m['team_info'])  ? json_decode($m['team_info'], true) : [];
-      $m['matchNumber'] = $m['match_number']  ?? null;
-      $m['isScored']    = (bool)($m['is_scored'] ?? false);
-      // Use external_id (CricAPI UUID) as the match id for the frontend
-      $m['id']          = !empty($m['external_id']) ? $m['external_id'] : (string)$m['id'];
 
-      // Don't send scorecard_raw to frontend (too large; fetched on demand)
-      unset($m['team_info'],$m['match_number'],$m['is_scored'],
-            $m['external_id'],$m['scorecard_raw'],$m['created_at']);
+      $m['teamInfo']    = !empty($m['team_info']) ? json_decode($m['team_info'], true) : [];
+      $m['matchNumber'] = $m['match_number'] ?? null;
+      $m['isScored']    = (bool)($m['is_scored'] ?? false);
+
+      // Use external_id as frontend match id
+      $m['id'] = !empty($m['external_id']) 
+        ? $m['external_id'] 
+        : (string)$m['id'];
+
+      unset(
+        $m['team_info'],
+        $m['match_number'],
+        $m['is_scored'],
+        $m['external_id'],
+        $m['scorecard_raw'],
+        $m['created_at']
+      );
     }
+
     $t['matches'] = $matches;
-    $t['id']      = (string)$t['id'];
+
+    // 🔥 IMPORTANT: tournament id as string
+    $t['id'] = (string)$t['id'];
   }
 
-  echo json_encode(['status'=>'success','data'=>$tournaments], JSON_UNESCAPED_SLASHES);
+  echo json_encode([
+    'status'=>'success',
+    'data'=>$tournaments
+  ], JSON_UNESCAPED_SLASHES);
 
 } catch(Exception $e){
   http_response_code(500);
-  echo json_encode(['status'=>'failure','reason'=>$e->getMessage()]);
+  echo json_encode([
+    'status'=>'failure',
+    'reason'=>$e->getMessage()
+  ]);
 }

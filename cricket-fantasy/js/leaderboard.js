@@ -8,23 +8,44 @@ import { weekKey }       from './week.js';
 export function playerTotalWithCap(player, tournament) {
   const wc      = tournament.weeklyCaptains || {};
   const matches = tournament.matches || [];
+  const mp      = player.matchPoints || {};
 
-  const matchWeek = {};
-  matches.forEach(m => { if (m.date) matchWeek[m.id] = weekKey(new Date(m.date)); });
+  // Find which team this player belongs to (needed for team-scoped captain lookup)
+  let playerTeamId = null;
+  for (const tm of (tournament.teams || [])) {
+    if ((tm.players || []).some(p => p.id === player.id)) {
+      playerTeamId = String(tm.id);
+      break;
+    }
+  }
 
-  const boostForWeek = {};
-  Object.entries(wc).forEach(([wk, teamSels]) => {
-    Object.values(teamSels).forEach(sel => {
-      if (player.id === sel.captain) boostForWeek[wk] = Math.max(boostForWeek[wk] || 1, 2);
-      else if (player.id === sel.vc) boostForWeek[wk] = Math.max(boostForWeek[wk] || 1, 1.5);
-    });
-  });
+  const allWkKeys = Object.keys(wc).sort();
 
-  const mp = player.matchPoints || {};
+  // For a given match date, find captain selection for this player's team.
+  // Uses exact week first, then falls back to most recent past week.
+  // This matches the same logic as renderFantasyPoints in matches.js.
+  function getCapForMatch(matchDate) {
+    if (!playerTeamId || !matchDate) return {};
+    const matchTs  = new Date(matchDate).getTime();
+    const matchWk  = weekKey(new Date(matchDate));
 
-  // Sum points from matchPoints with captain multiplier applied
+    // 1. Exact week match
+    const exact = wc[matchWk]?.[playerTeamId];
+    if (exact) return exact;
+
+    // 2. Most recent week whose Monday is <= match date
+    const sorted = [...allWkKeys].reverse();
+    for (const wk of sorted) {
+      if (new Date(wk).getTime() <= matchTs) {
+        const sel = wc[wk]?.[playerTeamId];
+        if (sel) return sel;
+      }
+    }
+    return {};
+  }
+
   let matchTotal = 0;
-  let mpRaw = 0;  // raw sum without multiplier (to detect unaccounted points)
+  let mpRaw      = 0;
 
   Object.entries(mp).forEach(([matchId, pts]) => {
     const raw =
@@ -33,21 +54,32 @@ export function playerTotalWithCap(player, tournament) {
       (pts.fielding?.points || 0) +
       (pts.bonus?.milestone || 0) +
       (pts.bonus?.mom       || 0) +
-      (pts.bonus?.manual    || 0);
-    const wk = matchWeek[matchId];
-    matchTotal += raw * (boostForWeek[wk] || 1);
-    mpRaw      += raw;
+      (pts.bonus?.manual    || 0) +
+      (pts.bonus?.hatrick   || 0) +
+      (pts.bonus?.sixSixes  || 0) +
+      (pts.bonus?.sixFours  || 0);
+    mpRaw += raw;
+
+    // Look up this match's date from the matches array
+    const match     = matches.find(m => m.id === matchId);
+    const matchDate = match?.date || null;
+    const cap       = getCapForMatch(matchDate);
+
+    const isC  = cap && String(cap.captain) === String(player.id);
+    const isVC = cap && String(cap.vc)      === String(player.id);
+    const mult = isC ? 2 : isVC ? 1.5 : 1;
+
+    matchTotal += raw * mult;
   });
 
-  // Fallback: if DB totalPoints > matchPoints sum,
-  // the difference is manual/team points with no specific match
-  // Add them as-is with no multiplier
+  // Fallback: points applied at team/tournament level (no matchPoints entry)
   const dbTotal     = player.totalPoints || 0;
   const unaccounted = dbTotal - mpRaw;
   if (unaccounted > 0) matchTotal += unaccounted;
 
   return Math.round(matchTotal * 10) / 10;
 }
+
 
 // ── Latest-week captain badge for a player ────────
 export function captainBadge(playerId, tournament) {

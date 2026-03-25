@@ -138,6 +138,25 @@ foreach($todayMatches as $match){
 
   $totalNewPts = 0;
 
+  // 🔥 ADD THIS BLOCK
+function buildLbwMap($scorecard){
+  $map = [];
+  foreach($scorecard as $inn){
+    foreach(($inn['bowling'] ?? []) as $bw){
+      $name = normName($bw['bowler']['name'] ?? '');
+      if(!$name) continue;
+
+      $lbw = (int)($bw['lbw'] ?? 0);
+      if($lbw > 0){
+        $map[$name] = ($map[$name] ?? 0) + $lbw;
+      }
+    }
+  }
+  return $map;
+}
+
+$lbwMap = buildLbwMap($scorecard);
+
   foreach($allPlayers as $p){
     $pname    = normName($p['name']);
     $cricTeam = $p['cricket_team'] ?? '';
@@ -179,7 +198,35 @@ foreach($todayMatches as $match){
         $runsConceded = (int)($bw['r'] ?? 0);
         $ovDec        = parseOvers((string)($bw['o'] ?? '0'));
         $eco          = isset($bw['eco']) ? (float)$bw['eco'] : ($ovDec > 0 ? $runsConceded / $ovDec : 0);
-        $bowl         = calcBowl($wkts, $maidens, $runsConceded, $ovDec, $eco);
+        foreach(($inn['bowling'] ?? []) as $bw){
+  $bn = normName($bw['bowler']['name'] ?? $bw['name'] ?? '');
+  if($bn !== $pname) continue;
+
+  $wkts         = (int)($bw['w'] ?? 0);
+  $maidens      = (int)($bw['m'] ?? 0);
+  $runsConceded = (int)($bw['r'] ?? 0);
+  $ovDec        = parseOvers((string)($bw['o'] ?? '0'));
+  $eco          = isset($bw['eco']) ? (float)$bw['eco'] : ($ovDec > 0 ? $runsConceded / $ovDec : 0);
+
+  // 🔥 ADD THESE 3 LINES
+  $wides   = (int)($bw['wd'] ?? 0);
+  $noballs = (int)($bw['nb'] ?? 0);
+  $lbwBowled = $lbwMap[$pname] ?? 0;
+
+  // 🔥 UPDATED CALL
+  $bowl = calcBowl(
+    $wkts,
+    $maidens,
+    $runsConceded,
+    $ovDec,
+    $eco,
+    $wides,
+    $noballs,
+    $lbwBowled
+  );
+
+  $bowlFound = true;
+}
         $bowlFound    = true;
       }
 
@@ -195,9 +242,8 @@ foreach($todayMatches as $match){
       }
     }
 
-    $field = ($catches * 10) + ($runouts * 10) + ($stumpings * 15);
+    $field = ($catches * 10) + ($runouts * 10) + ($stumpings * 10);
     $newPts = $bat + $bowl + $field;
-    if($newPts === 0) continue;
 
     $totalNewPts += $newPts;
 
@@ -312,8 +358,19 @@ function calcBat(int $r, int $b, int $fs, int $ss, float $sr, bool $duck, bool $
   return $J + $K + $M + ($fs * 1) + ($ss * 2) + $notOutBonus;
 }
 
-function calcBowl(int $w, int $m, int $r, float $ov, float $eco): int {
+function calcBowl(
+  int $w,
+  int $m,
+  int $r,
+  float $ov,
+  float $eco,
+  int $wd = 0,
+  int $nb = 0,
+  int $lbw = 0
+): int {
+
   $pts = $w * 25;
+
   if($w >= 8)      $pts += 175;
   elseif($w === 7) $pts += 150;
   elseif($w === 6) $pts += 125;
@@ -335,6 +392,12 @@ function calcBowl(int $w, int $m, int $r, float $ov, float $eco): int {
     elseif($eco > 12)   $pts -= 20;
     elseif($eco > 10)   $pts -= 10;
   }
+
+  // 🔥 NEW (MATCH JS)
+  $pts -= ($wd * 1);
+  $pts -= ($nb * 2);
+  $pts += ($lbw * 8);
+
   return $pts;
 }
 
