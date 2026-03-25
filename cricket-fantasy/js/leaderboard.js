@@ -41,6 +41,10 @@ export function playerTotalWithCap(player, tournament) {
         if (sel) return sel;
       }
     }
+    
+    // 3. Last resort: use latest week
+    if (sorted.length) return wc[sorted[0]]?.[playerTeamId] || {};
+
     return {};
   }
 
@@ -48,7 +52,8 @@ export function playerTotalWithCap(player, tournament) {
   let mpRaw      = 0;
 
   Object.entries(mp).forEach(([matchId, pts]) => {
-    const raw =
+
+    const base =
       (pts.batting?.points  || 0) +
       (pts.bowling?.points  || 0) +
       (pts.fielding?.points || 0) +
@@ -58,28 +63,24 @@ export function playerTotalWithCap(player, tournament) {
       (pts.bonus?.hatrick   || 0) +
       (pts.bonus?.sixSixes  || 0) +
       (pts.bonus?.sixFours  || 0);
-    mpRaw += raw;
-
-    // Look up this match's date from the matches array
+  
+    mpRaw += base;
+  
     const match     = matches.find(m => m.id === matchId);
     const matchDate = match?.date || null;
     const cap       = getCapForMatch(matchDate);
-
+  
     const isC  = cap && String(cap.captain) === String(player.id);
     const isVC = cap && String(cap.vc)      === String(player.id);
     const mult = isC ? 2 : isVC ? 1.5 : 1;
-
-    matchTotal += raw * mult;
+  
+    matchTotal += base * mult;
   });
 
   // Fallback: points applied at team/tournament level (no matchPoints entry)
-  const dbTotal     = player.totalPoints || 0;
-  const unaccounted = dbTotal - mpRaw;
-  if (unaccounted > 0) matchTotal += unaccounted;
 
   return Math.round(matchTotal * 10) / 10;
 }
-
 
 // ── Latest-week captain badge for a player ────────
 export function captainBadge(playerId, tournament) {
@@ -132,12 +133,15 @@ export function renderLeaderboard(t) {
       const natLine   = p.cricketTeam
         ? `<div style="font-size:12px;color:var(--dim);margin-top:3px">🏏 ${escHtml(p.cricketTeam)}</div>` : '';
       const ownerLine = `<div style="font-size:12px;color:var(--acc);margin-top:2px">👤 ${escHtml(p.ownerName || p.teamName)}</div>`;
+      const picHtml   = p.playerImg ? `<img src="${escAttr(p.playerImg)}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;border:1px solid var(--bdr);flex-shrink:0"/>` : '';
+      const roleHtml  = p.role ? `<span style="font-size:11px;color:var(--dim);margin-left:8px;font-weight:600">· ${escHtml(p.role)}</span>` : '';
       return `
         <div class="flex items-center gap-12" style="padding:11px 0;border-bottom:1px solid var(--bdr)">
           <span style="font-size:20px;min-width:28px;text-align:center;font-weight:900;color:${medalColor}">${medals[i] || i + 1}</span>
+          ${picHtml}
           <div class="flex-1" style="min-width:0">
             <div class="fw-700 txt-main" style="font-size:14px;display:flex;align-items:center;flex-wrap:wrap">
-              ${badge}${escHtml(p.name)} &nbsp; ${ownerLine}
+              ${badge}${escHtml(p.name)}${roleHtml} &nbsp; ${ownerLine}
             </div>
             ${natLine}
           </div>
@@ -215,28 +219,65 @@ export function renderLeaderboard(t) {
 
       const matchRows = matches.map(m => {
         const pts   = mp[m.id] || {};
-        const total = (pts.batting?.points  || 0) +
+        const base = (pts.batting?.points  || 0) +
               (pts.bowling?.points  || 0) +
               (pts.fielding?.points || 0) +
               (pts.bonus?.mom       || 0) +
               (pts.bonus?.manual    || 0) +
-              (pts.bonus?.milestone || 0);
-        if (total === 0) return '';
+              (pts.bonus?.milestone || 0) +
+              (pts.bonus?.hatrick   || 0) +
+              (pts.bonus?.sixSixes  || 0) +
+              (pts.bonus?.sixFours  || 0);
+              
+        if (base === 0) return '';
+        
+        // Find multiplier for this match
+        let mult = 1;
+        if (m.date && team.id) {
+          const matchTs  = new Date(m.date).getTime();
+          const matchWk  = weekKey(new Date(m.date));
+          const wc       = t.weeklyCaptains || {};
+          let cap = wc[matchWk]?.[team.id];
+          
+          if (!cap) {
+            const allWkKeys = Object.keys(wc).sort().reverse();
+            for (const wk of allWkKeys) {
+              if (new Date(wk).getTime() <= matchTs) {
+                cap = wc[wk]?.[team.id];
+                if (cap) break;
+              }
+            }
+            if (!cap && allWkKeys.length) {
+              cap = wc[allWkKeys[0]]?.[team.id];
+            }
+          }
+          
+          if (cap) {
+             if (String(cap.captain) === String(p.id)) mult = 2;
+             else if (String(cap.vc) === String(p.id)) mult = 1.5;
+          }
+        }
+        
+        const total = base * mult;
+        const multDisplay = mult > 1 ? `<span style="font-size:10px;color:var(--dim);margin-right:6px">(${mult}x)</span>` : '';
+
         return `
           <tr style="border-bottom:1px solid var(--bdr)">
             <td style="padding:6px 0;font-size:12px;color:#000">${escHtml(m.name || '')}</td>
-            <td style="padding:6px 0;text-align:right;font-size:12px;font-weight:700;color:#000">+${total}</td>
+            <td style="padding:6px 0;text-align:right;font-size:12px;font-weight:700;color:#000">${multDisplay}+${total}</td>
           </tr>`;
       }).join('');
 
       return `
         <div class="player-row" onclick="event.stopPropagation(); togglePlayerMatches(this)"
-             style="cursor:pointer;${p.isInjured ? 'opacity:.5' : ''}">
+             style="cursor:pointer;display:flex;align-items:center;gap:10px;${p.isInjured ? 'opacity:.5' : ''}">
           ${p.isInjured ? '<span style="font-size:13px">🩹</span>' : ''}
+          ${p.playerImg ? `<img src="${escAttr(p.playerImg)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0;border:1px solid var(--bdr)"/>` : ''}
           <div class="flex-1">
             <div class="${p.isInjured ? 'txt-dim' : 'txt-main'} fw-600"
-                 style="font-size:14px;${p.isInjured ? 'text-decoration:line-through' : ''}">
+                 style="font-size:14px;${p.isInjured ? 'text-decoration:line-through' : ''};display:flex;align-items:center;flex-wrap:wrap">
               ${badgePill}${escHtml(p.name)}
+              ${p.role ? `<span style="font-size:10px;color:var(--dim);margin-left:6px;font-weight:600">· ${escHtml(p.role)}</span>` : ''}
               <span style="margin-left:6px;font-size:10px;color:#9ca3af">▼</span>
             </div>
           </div>

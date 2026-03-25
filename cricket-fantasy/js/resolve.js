@@ -44,7 +44,7 @@ export function renderResolve() {
 
     // ── Suggestion pills ──────────────────────────
     const pills = suggs.map(s => {
-      const isSelected = state.wiz.choices[orig] === s.name;
+      const isSelected = state.wiz.choices[orig]?.name === s.name;
       const teamInfo   = s.team
         ? `<div style="font-size:10px;color:var(--dim);margin-top:3px">
             ${s.teamImg ? `<img src="${escHtml(s.teamImg)}" style="width:14px;height:14px;border-radius:50%;vertical-align:middle;margin-right:3px"/>` : ''}
@@ -61,7 +61,7 @@ export function renderResolve() {
         </button>`;
     }).join('');
 
-    const keepSelected = state.wiz.choices[orig] === orig;
+    const keepSelected = state.wiz.choices[orig]?.name === orig;
 
     card.innerHTML = `
       <div class="flex items-center gap-14 mb-12" style="flex-wrap:wrap">
@@ -80,7 +80,7 @@ export function renderResolve() {
         <div class="flex gap-10 mb-12" style="align-items:center">
           <input class="inp flex-1" id="custom-${escId(orig)}"
             placeholder="Type correct player name"
-            value="${escHtml(state.wiz.choices[orig] !== orig ? (state.wiz.choices[orig] || '') : '')}"
+            value="${escHtml(state.wiz.choices[orig]?.name !== orig ? (state.wiz.choices[orig]?.name || '') : '')}"
             oninput="setCustomName('${escAttr(orig)}', this.value)"/>
           <button class="btn btn-ghost" style="white-space:nowrap"
             onclick="setCustomName('${escAttr(orig)}', document.getElementById('custom-${escId(orig)}').value)">
@@ -105,14 +105,21 @@ export function renderResolve() {
   updateResolveBtn();
 }
 
-export function pickName(escapedOrig, orig, chosen) {
-  state.wiz.choices[orig] = chosen === '__KEEP__' ? orig : chosen;
+export function pickName(escapedOrig, orig, chosenName) {
+  if (chosenName === '__KEEP__') {
+    state.wiz.choices[orig] = { name: orig };
+  } else {
+    const suggs = state.wiz.suggestions[orig] || [];
+    const found = suggs.find(s => s.name === chosenName);
+    state.wiz.choices[orig] = found || { name: chosenName };
+  }
   renderResolve();
   updateResolveBtn();
 }
 
 export function setCustomName(orig, value) {
-  state.wiz.choices[orig] = value.trim() || orig;
+  const val = value.trim() || orig;
+  state.wiz.choices[orig] = { name: val };
   updateResolveBtn();
 }
 
@@ -130,7 +137,7 @@ export function resolveConfirm() { goPage('preview'); }
 export function resolveSkip() {
   // Accept all originals as-is
   Object.keys(state.wiz.suggestions || {}).forEach(orig => {
-    if (!state.wiz.choices[orig]) state.wiz.choices[orig] = orig;
+    if (!state.wiz.choices[orig]) state.wiz.choices[orig] = { name: orig };
   });
   goPage('preview');
 }

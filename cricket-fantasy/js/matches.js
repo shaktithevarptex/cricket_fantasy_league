@@ -210,9 +210,11 @@ const mb = b.matchPoints[String(matchId)] || {};
           <div class="flex gap-10 player-row"
                onclick="toggleStats(this)"
                style="padding:8px 0;border-bottom:1px solid var(--bdr);cursor:pointer;align-items:center">
+            ${p.playerImg ? `<img src="${escAttr(p.playerImg)}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:1px solid var(--bdr);flex-shrink:0"/>` : ''}
             <div class="flex-1">
               <div class="fw-600 txt-main" style="display:flex;align-items:center;flex-wrap:wrap">
                 ${escHtml(p.name)}
+                ${p.role ? `<span style="font-size:10px;color:var(--dim);margin-left:6px;font-weight:600">· ${escHtml(p.role)}</span>` : ''}
                 ${isCaptain ? `<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;margin-left:6px;background:rgba(251,191,36,.2);color:#fbbf24;border:1px solid rgba(251,191,36,.4)">C</span><span style="font-size:11px;color:#fbbf24;font-weight:700;margin-left:3px">×2</span>` : isVC ? `<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;margin-left:6px;background:rgba(139,92,246,.2);color:#a78bfa;border:1px solid rgba(139,92,246,.35)">VC</span><span style="font-size:11px;color:#a78bfa;font-weight:700;margin-left:3px">×1.5</span>` : ''}
                 <span style="margin-left:6px;font-size:10px;color:#9ca3af">▼</span>
               </div>

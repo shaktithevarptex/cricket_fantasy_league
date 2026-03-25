@@ -4,7 +4,7 @@
 
 export function getWeekMonday(date) {
   const d   = new Date(date);
-  const day = d.getDay();                         // 0 = Sun
+  const day = d.getDay();                        
   const diff = day === 0 ? -6 : 1 - day;
   d.setDate(d.getDate() + diff);
   return d.toISOString().slice(0, 10);
@@ -16,12 +16,12 @@ export function getWeekSunday(date) {
   return mon.toISOString().slice(0, 10);
 }
 
-/** Return the Monday-date key (YYYY-MM-DD) for any date. */
+
 export function weekKey(date) {
   return getWeekMonday(date);
 }
 
-/** Human-readable label "DD Mon – DD Mon" for a week key. */
+
 export function weekLabel(key) {
   if (!key) return '';
   const sun = getWeekSunday(key);
@@ -33,7 +33,7 @@ export function weekLabel(key) {
   return `${fmt(key)} – ${fmt(sun)}`;
 }
 
-/** ISO week number for a given date. */
+
 export function getISOWeekNum(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
@@ -41,7 +41,6 @@ export function getISOWeekNum(date) {
   return Math.ceil((((d - y) / 86400000) + 1) / 7);
 }
 
-/** Convert a <input type="week"> value "YYYY-Www" to a Monday YYYY-MM-DD key. */
 export function weekKeyFromInput(val) {
   if (!val) return weekKey(new Date());
   const [yr, ww] = val.split('-W');
@@ -54,7 +53,6 @@ export function weekKeyFromInput(val) {
   return mon.toISOString().slice(0, 10);
 }
 
-/** Return the week-key for a match (looked up by match date). */
 export function getWeekKeyFromMatch(matchId, tournament) {
   const match = (tournament.matches || []).find(m => m.id === matchId);
   if (!match || !match.date) return null;

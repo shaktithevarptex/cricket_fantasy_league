@@ -136,11 +136,11 @@ async function validateNamesViaDB(teams) {
   for (const [inputName, result] of Object.entries(dbResults)) {
     if (result.status === 'exact') {
       // Auto-accept, no confirmation needed
-      state.wiz.choices[inputName] = result.match.name;
+      state.wiz.choices[inputName] = result.match;
     } else if (result.status === 'auto') {
       // High-confidence suggestion — pre-select but show in resolve UI
       const top = result.suggestions[0];
-      state.wiz.choices[inputName] = top.name;
+      state.wiz.choices[inputName] = top;
       suggestions[inputName] = result.suggestions;
     } else if (result.status === 'fuzzy') {
       suggestions[inputName] = result.suggestions;

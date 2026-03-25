@@ -37,12 +37,13 @@ export function renderPreview() {
     const card       = document.createElement('div');
     card.className   = 'preview-card';
     const playerList = team.players.map(p => {
-      const res       = choices[p.name];
-      const corrected = res && res !== p.name;
-      const display   = res || p.name;
+      const resObj    = choices[p.name];
+      const display   = resObj ? resObj.name : p.name;
+      const corrected = display !== p.name;
       return `
         <div class="player-row">
           <span class="player-name ${corrected ? 'corrected' : ''}">${escHtml(display)}</span>
+          ${resObj && resObj.role ? `<span style="font-size:10px;color:var(--dim);margin-left:4px">${escHtml(resObj.role)}</span>` : ''}
           ${p.price ? `<span class="player-price">${p.price}Cr</span>` : ''}
         </div>`;
     }).join('');
@@ -76,19 +77,27 @@ export async function createTournament() {
   if (!sid.trim())   { alert('Series ID required'); return; }
 
   const teams = parsedTeams.map(team => ({
+    id:      team.name.replace(/\s+/g, '_') + '_' + Math.random().toString(36).substr(2, 5),
     name:    team.name,
     owner:   team.owner || team.name,
-    players: team.players.map(p => ({
-      name:           choices[p.name] || p.name,
-      originalName:   p.name,
-      price:          p.price || 0,
-      totalPoints:    0,
-      battingPoints:  0,
-      bowlingPoints:  0,
-      fieldingPoints: 0,
-      matchPoints:    {},
-      isInjured:      false
-    }))
+    players: team.players.map(p => {
+      const dbInfo = choices[p.name] || {};
+      return {
+        id:             dbInfo.externalId || (p.name.replace(/\s+/g, '_') + '_' + Math.random().toString(36).substr(2, 5)),
+        name:           dbInfo.name || p.name,
+        originalName:   p.name,
+        playerImg:      dbInfo.playerImg || null,
+        role:           dbInfo.role || null,
+        country:        dbInfo.country || null,
+        price:          p.price || 0,
+        totalPoints:    0,
+        battingPoints:  0,
+        bowlingPoints:  0,
+        fieldingPoints: 0,
+        matchPoints:    {},
+        isInjured:      false
+      };
+    })
   }));
 
   const newT = {

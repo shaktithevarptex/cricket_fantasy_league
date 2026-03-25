@@ -62,8 +62,20 @@ export function renderSubScores(t) {
       <div class="fs-11 txt-dim" style="margin-top:6px">Each key has 100 hits/day. Use separate keys to get 300 total hits.</div>
     </div>`;
 
+  const syncProfileCard = `
+    <div class="card mb-14" style="border-left:3px solid var(--ok)">
+      <div class="lbl">✨ Sync Player Profiles (Retrospective)</div>
+      <div class="txt-dim fs-12" style="margin:8px 0 14px;line-height:1.4">
+        Your current tournament was created before player images were added. Click this button to scan the database and attach all available headshots and roles to your existing players <b>immediately</b>!
+      </div>
+      <button class="btn" style="background:rgba(52,211,153,.15);color:var(--ok);border:1px solid rgba(52,211,153,.35)" onclick="window.syncMissingProfiles()">🔄 Sync Profiles Now</button>
+      <div id="sync-profile-msg" style="margin-top:10px;font-size:12px;font-weight:600"></div>
+    </div>
+  `;
+
   el.innerHTML = `
     ${keyCard}
+    ${syncProfileCard}
     <div class="card mb-14">
       <div class="lbl">📋 Step 1 — Fetch Match Schedule</div>
       <div class="txt-dim fs-12" style="margin:8px 0 14px;line-height:1.6">
@@ -130,6 +142,62 @@ export function saveApiKeysFromUI() {
 
   toast('✅ API keys saved');
 }
+
+window.syncMissingProfiles = async function() {
+  const msgEl = document.getElementById('sync-profile-msg');
+  const show  = (html) => { if (msgEl) { msgEl.innerHTML = html; msgEl.style.display = 'block'; } };
+  show('<span style="color:var(--warn)">⏳ Scanning database for profiles… please wait.</span>');
+
+  const t = getTournament();
+  if (!t || !t.teams) { show('<span style="color:var(--err)">❌ No tournament selected.</span>'); return; }
+
+  const allNames = [...new Set(
+    t.teams.flatMap(tm => tm.players.map(p => p.originalName || p.name))
+  )];
+
+  try {
+    const res = await fetch('api/match_players.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ names: allNames })
+    });
+    const j = await res.json();
+    if (j.status !== 'success') throw new Error(j.reason || 'API error');
+
+    const dbResults = j.results || {};
+    let updated = 0;
+
+    const newTeams = t.teams.map(tm => ({
+      ...tm,
+      players: tm.players.map(p => {
+        const key   = p.originalName || p.name;
+        const match = dbResults[key];
+        if (!match) return p;
+
+        let best = null;
+        if      (match.status === 'exact')  best = match.match;
+        else if (match.status === 'auto' || match.status === 'fuzzy') best = match.suggestions?.[0];
+
+        if (best && (best.playerImg || best.role || best.country)) {
+          updated++;
+          return {
+            ...p,
+            playerImg: p.playerImg || best.playerImg || null,
+            role:      p.role      || best.role      || null,
+            country:   p.country   || best.country   || null
+          };
+        }
+        return p;
+      })
+    }));
+
+    updateTournament({ ...t, teams: newTeams });
+    show(`<span style="color:var(--ok)">✅ Synced profiles for ${updated} players! Refresh the Leaderboard/Matches to see them.</span>`);
+  } catch (err) {
+    show(`<span style="color:var(--err)">❌ ${escHtml(err.message)}</span>`);
+  }
+};
+
 export async function fetchSeriesMatches() {
   const sid = (document.getElementById('scores-sid')?.value || '').trim();
   const log = document.getElementById('scores-log');
@@ -660,7 +728,7 @@ export function renderSubInjury(t) {
   el.innerHTML = `
     <div class="card">
       <div class="lbl">🩹 Injury Replacement</div>
-      <div class="txt-dim fs-13" style="margin:10px 0 20px;line-height:1.7">Mark a player injured and add a replacement. All points transfer automatically.</div>
+      <div class="txt-dim fs-13" style="margin:10px 0 20px;line-height:1.7">Mark a player injured and add a replacement. Both will be shown, and points transfer automatically.</div>
       <div id="injury-msg" style="display:none;margin-bottom:14px"></div>
       <div class="flex flex-col gap-14">
         <div>
@@ -676,7 +744,11 @@ export function renderSubInjury(t) {
         </div>
         <div id="inj-rep-block" style="display:none">
           <div class="lbl">Replacement Player Name</div>
-          <input class="inp" id="inj-rep" placeholder="Type replacement player's full name"/>
+          <div class="flex gap-8">
+            <input class="inp flex-1" id="inj-rep" placeholder="Type replacement player's full name" onkeydown="if(event.key==='Enter') window.searchReplacementPlayer()"/>
+            <button class="btn btn-primary" onclick="window.searchReplacementPlayer()" style="white-space:nowrap">🔍 Search</button>
+          </div>
+          <div id="inj-search-res" style="margin-top:10px;display:none"></div>
         </div>
         <button class="btn btn-danger" id="inj-submit-btn" style="display:none" onclick="processInjury()">⚡ Process Replacement</button>
       </div>
@@ -692,14 +764,116 @@ export function updateInjuryPlayers() {
   const pb     = document.getElementById('inj-player-block');
   const rb     = document.getElementById('inj-rep-block');
   const sb     = document.getElementById('inj-submit-btn');
+  const res    = document.getElementById('inj-search-res');
+  const repInp = document.getElementById('inj-rep');
+  
+  if (res) { res.style.display = 'none'; res.innerHTML = ''; }
+  if (repInp) repInp.value = '';
+  state.injuryReplacement = null;
+  
   if (!team) { [pb, rb, sb].forEach(el => el && (el.style.display = 'none')); return; }
   const ps = document.getElementById('inj-player');
   ps.innerHTML = '<option value="">— Select player —</option>' +
     (team.players || []).filter(p => !p.isInjured).map(p =>
       `<option value="${p.id}">${escHtml(p.name)} (${p.totalPoints || 0} pts)</option>`
     ).join('');
-  [pb, rb, sb].forEach(el => el && (el.style.display = 'block'));
+  [pb, rb].forEach(el => el && (el.style.display = 'block'));
+  if (sb) sb.style.display = 'none';
 }
+
+window.searchReplacementPlayer = async function() {
+  const repName = (document.getElementById('inj-rep')?.value || '').trim();
+  const resEl   = document.getElementById('inj-search-res');
+  const btnEl   = document.getElementById('inj-submit-btn');
+  
+  if (!repName) return;
+  
+  if (resEl) {
+    resEl.innerHTML = '<div class="txt-dim fs-12">🔍 Searching database...</div>';
+    resEl.style.display = 'block';
+  }
+  if (btnEl) btnEl.style.display = 'none';
+  state.injuryReplacement = null;
+  
+  try {
+    const res = await fetch('api/match_players.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ names: [repName] })
+    });
+    const j = await res.json();
+    if (j.status === 'success' && j.results && j.results[repName]) {
+      const dbMatch = j.results[repName];
+      
+      if (dbMatch.status === 'exact' || dbMatch.status === 'auto') {
+        const top = dbMatch.status === 'exact' ? dbMatch.match : dbMatch.suggestions[0];
+        window.selectReplacementPlayer(top);
+      } else if (dbMatch.status === 'fuzzy') {
+        window.injSuggestions = dbMatch.suggestions; // temporary store
+        const pills = dbMatch.suggestions.map((s, idx) => `
+          <button class="name-pill" style="margin-right:8px;margin-bottom:8px;text-align:left;padding:6px 12px;background:var(--surf1);border:1px solid var(--bdr);color:var(--txt);border-radius:6px;cursor:pointer"
+            onclick="window.selectReplacementPlayer(window.injSuggestions[${idx}])">
+            <div style="font-weight:600">${escHtml(s.name)}
+              <span style="color:var(--dim);font-size:10px;margin-left:4px">${Math.round(s.score * 100)}%</span>
+            </div>
+            ${s.team ? `<div style="font-size:10px;color:var(--dim);margin-top:3px">${s.teamImg ? `<img src="${escAttr(s.teamImg)}" style="width:12px;height:12px;border-radius:50%;vertical-align:middle;margin-right:4px"/>` : ''}${escHtml(s.team)} · ${escHtml(s.role || '')}</div>` : ''}
+          </button>
+        `).join('');
+        
+        resEl.innerHTML = `
+          <div class="txt-dim fs-12 mb-8" style="color:var(--warn)">⚠️ Multiple or fuzzy matches found. Click to select the correct player:</div>
+          <div class="flex" style="flex-wrap:wrap">
+            ${pills}
+          </div>
+          <button class="btn btn-ghost" style="margin-top:4px;font-size:11px" onclick="window.selectReplacementPlayer({name: '${escAttr(repName)}', status: 'unknown'})">Keep "${escHtml(repName)}" (Unknown DB ID)</button>
+        `;
+      } else {
+        resEl.innerHTML = `
+          <div class="alert alert-err" style="font-size:12px;margin-bottom:8px;padding:8px">❌ No match found in DB for "${escHtml(repName)}".</div>
+          <button class="btn btn-ghost" style="font-size:11px" onclick="window.selectReplacementPlayer({name: '${escAttr(repName)}', status: 'unknown'})">Use "${escHtml(repName)}" Anyway (No DB Link)</button>
+        `;
+      }
+    } else {
+      resEl.innerHTML = '<div class="alert alert-err" style="padding:8px;font-size:12px">❌ API failed or returned unexpected format.</div>';
+    }
+  } catch (err) {
+    resEl.innerHTML = '<div class="alert alert-err" style="padding:8px;font-size:12px">❌ Error searching DB: ' + escHtml(err.message) + '</div>';
+  }
+};
+
+window.selectReplacementPlayer = function(playerData) {
+  const t = getTournament();
+  
+  // Check if player is already owned by ANY team
+  const existingTeam = (t.teams || []).find(tm => 
+    (tm.players || []).some(p => norm(p.name) === norm(playerData.name))
+  );
+
+  const resEl = document.getElementById('inj-search-res');
+  const btnEl = document.getElementById('inj-submit-btn');
+
+  if (existingTeam) {
+    if (resEl) {
+      resEl.innerHTML = `<div class="alert alert-err" style="font-size:13px;padding:8px">❌ <strong>${escHtml(playerData.name)}</strong> is already owned by <strong>${escHtml(existingTeam.owner || existingTeam.name)}</strong>. You must select an unowned player!</div>`;
+    }
+    if (btnEl) btnEl.style.display = 'none';
+    state.injuryReplacement = null;
+    return;
+  }
+
+  state.injuryReplacement = playerData;
+  
+  const teamHtml = playerData.team ? ` · ${escHtml(playerData.team)}` : '';
+  const warnHtml = playerData.status === 'unknown' ? ` <span style="color:var(--err);font-size:11px">(No DB Link - won't get auto points)</span>` : '';
+  
+  if (resEl) {
+    resEl.innerHTML = `<div class="alert alert-ok" style="font-size:13px;padding:8px;display:flex;align-items:center;gap:8px">
+      ${playerData.playerImg ? `<img src="${escAttr(playerData.playerImg)}" style="width:24px;height:24px;border-radius:50%;object-fit:cover"/>` : ''}
+      <div>✅ Selected: <strong>${escHtml(playerData.name)}</strong><span style="color:var(--dim);font-size:11px">${teamHtml}</span>${warnHtml}</div>
+    </div>`;
+  }
+  if (btnEl) btnEl.style.display = 'block';
+};
 
 function buildCurrentInjuries(t) {
   const injured = (t.teams || []).flatMap(tm =>
@@ -710,14 +884,29 @@ function buildCurrentInjuries(t) {
     <div style="margin-top:24px">
       <div class="lbl">Current Injuries</div>
       <div style="margin-top:10px">
-        ${injured.map(p => `
-          <div class="flex jc-between" style="padding:8px 0;border-bottom:1px solid var(--bdr)">
-            <div>
-              <span style="color:var(--err)">🩹 ${escHtml(p.name)}</span>
-              <span class="txt-dim fs-12" style="margin-left:8px">${escHtml(p.teamName)}</span>
+        ${injured.map(p => {
+          const team = (t.teams || []).find(tm => tm.name === p.teamName) || {players:[]};
+          const rep = team.players.find(r => r.replacedFor === p.name);
+          const repHtml = rep ? `
+            <div style="display:flex;align-items:center;gap:6px;margin-top:6px;padding-left:4px;border-left:2px solid var(--ok)">
+              <span style="font-size:11px;color:var(--dim)">➡️ replaced by</span>
+              <span style="font-size:13px;font-weight:600;color:var(--ok)">${escHtml(rep.name)}</span>
+              ${rep.role ? `<span style="font-size:10px;color:var(--dim)">· ${escHtml(rep.role)}</span>` : ''}
             </div>
-            <span class="badge" style="background:rgba(248,113,113,.15);border:1px solid rgba(248,113,113,.35);color:var(--err)">injured</span>
-          </div>`).join('')}
+          ` : '';
+
+          return `
+          <div style="padding:10px 0;border-bottom:1px solid var(--bdr)">
+            <div class="flex jc-between items-center">
+              <div>
+                <div style="color:var(--err);font-weight:600;font-size:14px">🩹 ${escHtml(p.name)}</div>
+                <div class="txt-dim fs-12" style="margin-top:2px">${escHtml(p.teamName)}</div>
+              </div>
+              <span class="badge" style="background:rgba(248,113,113,.15);border:1px solid rgba(248,113,113,.35);color:var(--err)">injured</span>
+            </div>
+            ${repHtml}
+          </div>`;
+        }).join('')}
       </div>
     </div>`;
 }
@@ -725,30 +914,38 @@ function buildCurrentInjuries(t) {
 export function processInjury() {
   const teamId   = document.getElementById('inj-team')?.value;
   const playerId = document.getElementById('inj-player')?.value;
-  const repName  = (document.getElementById('inj-rep')?.value || '').trim();
+  const activeRep = state.injuryReplacement;
   const msgEl    = document.getElementById('injury-msg');
   const showMsg  = html => { if (msgEl) { msgEl.innerHTML = html; msgEl.style.display = 'block'; } };
 
-  if (!teamId || !playerId || !repName) { showMsg('<div class="alert alert-err">Fill all fields.</div>'); return; }
+  if (!teamId || !playerId || !activeRep) { showMsg('<div class="alert alert-err">Please search and select a replacement player first.</div>'); return; }
   const t       = getTournament();
   const team    = (t.teams || []).find(x => x.id === teamId);
   const injured = (team?.players || []).find(p => p.id === playerId);
   if (!injured) return;
 
   const rep = {
-    id: makeId('rep'), name: repName, originalName: repName,
+    id: activeRep.externalId || makeId('rep'), 
+    name: activeRep.name, 
+    originalName: activeRep.name,
+    playerImg: activeRep.playerImg || null,
+    role: activeRep.role || null,
+    country: activeRep.country || null,
     totalPoints:    injured.totalPoints    || 0,
     battingPoints:  injured.battingPoints  || 0,
     bowlingPoints:  injured.bowlingPoints  || 0,
     fieldingPoints: injured.fieldingPoints || 0,
     matchPoints:    { ...(injured.matchPoints || {}) },
-    isInjured: false, replacedFor: injured.name
+    isInjured: false, 
+    replacedFor: injured.name
   };
+  
   const newTeams = (t.teams || []).map(tm => {
     if (tm.id !== teamId) return tm;
     return { ...tm, players: [...tm.players.map(p => p.id === playerId ? { ...p, isInjured: true } : p), rep] };
   });
   updateTournament({ ...t, teams: newTeams });
-  showMsg(`<div class="alert alert-ok">✅ ${escHtml(injured.name)} → ${escHtml(repName)}. ${injured.totalPoints || 0} pts transferred.</div>`);
+  state.injuryReplacement = null; // Clear so it doesn't leak to next operation
+  showMsg(`<div class="alert alert-ok">✅ ${escHtml(injured.name)} ➡️ ${escHtml(rep.name)}. ${injured.totalPoints || 0} pts transferred successfully!</div>`);
   renderSubInjury(getTournament());
 }
